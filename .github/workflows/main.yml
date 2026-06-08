@@ -1,0 +1,259 @@
+name: Build AppChat APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: تحميل الكود
+        uses: actions/checkout@v4
+      
+      - name: فك ضغط المشروع
+        run: |
+          unzip "appchat.zip" -d project/
+          echo "محتوى المشروع:"
+          ls -la project/
+      
+      - name: إعداد Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: تثبيت الاعتماديات
+        run: |
+          cd project
+          npm install
+      
+      - name: بناء المشروع
+        run: |
+          cd project
+          npm run build
+          echo "محتوى مجلد dist:"
+          ls -la dist/
+      
+      - name: إعداد Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      
+      - name: تثبيت Android Build Tools
+        run: |
+          mkdir -p $HOME/android-sdk/cmdline-tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
+          unzip -q commandlinetools-linux-9477386_latest.zip
+          mv cmdline-tools $HOME/android-sdk/cmdline-tools/latest
+          
+          export ANDROID_HOME=$HOME/android-sdk
+          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+          
+          yes | sdkmanager --sdk_root=$ANDROID_HOME --licenses > /dev/null 2>&1 || true
+          sdkmanager --sdk_root=$ANDROID_HOME "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          
+          echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "$HOME/android-sdk/build-tools/35.0.0" >> $GITHUB_PATH
+          echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
+      
+      - name: إنشاء ملفات المشروع
+        run: |
+          mkdir -p MyApp/res/values
+          
+          cat > MyApp/AndroidManifest.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="com.appchat.ai">
+              
+              <uses-permission android:name="android.permission.INTERNET" />
+              
+              <supports-screens
+                  android:smallScreens="true"
+                  android:normalScreens="true"
+                  android:largeScreens="true"
+                  android:xlargeScreens="true"
+                  android:anyDensity="true" />
+              
+              <application
+                  android:allowBackup="true"
+                  android:label="AppChat AI"
+                  android:icon="@drawable/ic_launcher"
+                  android:usesCleartextTraffic="true"
+                  android:supportsRtl="true"
+                  android:hardwareAccelerated="true">
+                  
+                  <activity
+                      android:name="com.appchat.ai.MainActivity"
+                      android:exported="true"
+                      android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize"
+                      android:resizeableActivity="true"
+                      android:windowSoftInputMode="adjustResize"
+                      android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+          
+          cat > MyApp/res/values/strings.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">AppChat AI</string>
+          </resources>
+          EOF
+          
+          cat > MyApp/MainActivity.java << 'EOF'
+          package com.appchat.ai;
+          
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import android.webkit.WebSettings;
+          import android.webkit.WebChromeClient;
+          import android.view.View;
+          import android.view.WindowManager;
+          import android.view.WindowInsets;
+          import android.view.WindowInsetsController;
+          import android.os.Build;
+          
+          public class MainActivity extends Activity {
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                      getWindow().setDecorFitsSystemWindows(false);
+                      WindowInsetsController controller = getWindow().getInsetsController();
+                      if (controller != null) {
+                          controller.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                          controller.setSystemBarsBehavior(
+                              WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                          );
+                      }
+                  }
+                  
+                  if (getActionBar() != null) {
+                      getActionBar().hide();
+                  }
+                  
+                  WebView webView = new WebView(this);
+                  webView.setWebViewClient(new WebViewClient());
+                  webView.setWebChromeClient(new WebChromeClient());
+                  
+                  WebSettings settings = webView.getSettings();
+                  settings.setJavaScriptEnabled(true);
+                  settings.setAllowFileAccess(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setLoadWithOverviewMode(true);
+                  settings.setUseWideViewPort(true);
+                  settings.setSupportZoom(false);
+                  settings.setBuiltInZoomControls(false);
+                  settings.setDisplayZoomControls(false);
+                  settings.setMediaPlaybackRequiresUserGesture(false);
+                  
+                  webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+                  webView.loadUrl("file:///android_asset/index.html");
+                  setContentView(webView);
+                  
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                      getWindow().getAttributes().layoutInDisplayCutoutMode = 
+                          WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+                  }
+              }
+          }
+          EOF
+      
+      - name: إنشاء أيقونة
+        run: |
+          sudo apt-get install -y imagemagick
+          mkdir -p MyApp/res/drawable
+          convert -size 512x512 xc:'#16213e' \
+            -fill '#e94560' -pointsize 220 \
+            -gravity center -annotate 0 "💬" \
+            MyApp/res/drawable/ic_launcher.png
+      
+      - name: إنشاء مفتاح توقيع
+        run: |
+          keytool -genkey -v \
+            -keystore release.keystore \
+            -alias appchat \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass android123 \
+            -keypass android123 \
+            -dname "CN=AppChat AI, OU=Dev, O=AI, L=City, ST=State, C=US"
+      
+      - name: بناء APK يدوياً مع targetSdk 35
+        run: |
+          BUILD_TOOLS=$HOME/android-sdk/build-tools/35.0.0
+          PLATFORM=$HOME/android-sdk/platforms/android-35
+          ASSETS_DIR=MyApp/assets
+          BUILD_DIR=MyApp/build
+          
+          mkdir -p $ASSETS_DIR $BUILD_DIR/classes $BUILD_DIR/apk
+          
+          cp -r project/dist/* $ASSETS_DIR/
+          echo "ملفات assets:"
+          ls -la $ASSETS_DIR/
+          
+          mkdir -p $BUILD_DIR/gen
+          $BUILD_TOOLS/aapt package -f -m \
+            -J $BUILD_DIR/gen \
+            -M MyApp/AndroidManifest.xml \
+            -S MyApp/res \
+            -I $PLATFORM/android.jar \
+            -A $ASSETS_DIR \
+            --auto-add-overlay \
+            --target-sdk-version 35 \
+            --min-sdk-version 21
+          
+          javac -source 1.8 -target 1.8 \
+            -d $BUILD_DIR/classes \
+            -cp $PLATFORM/android.jar:$BUILD_DIR/gen \
+            MyApp/MainActivity.java \
+            $BUILD_DIR/gen/com/appchat/ai/R.java
+          
+          $BUILD_TOOLS/d8 \
+            --lib $PLATFORM/android.jar \
+            --output $BUILD_DIR/apk \
+            $BUILD_DIR/classes/com/appchat/ai/*.class
+          
+          $BUILD_TOOLS/aapt package -f -m \
+            -F $BUILD_DIR/app-unsigned.apk \
+            -M MyApp/AndroidManifest.xml \
+            -S MyApp/res \
+            -I $PLATFORM/android.jar \
+            -A $ASSETS_DIR \
+            --auto-add-overlay \
+            --target-sdk-version 35 \
+            --min-sdk-version 21
+          
+          cd $BUILD_DIR/apk
+          zip -r ../app-unsigned.apk classes.dex
+          cd ../../..
+          
+          $BUILD_TOOLS/apksigner sign \
+            --ks release.keystore \
+            --ks-key-alias appchat \
+            --ks-pass pass:android123 \
+            --key-pass pass:android123 \
+            $BUILD_DIR/app-unsigned.apk
+          
+          $BUILD_TOOLS/zipalign -f 4 $BUILD_DIR/app-unsigned.apk appchat.apk
+          
+          echo "✅ APK جاهز وموقع:"
+          ls -lh appchat.apk
+      
+      - name: رفع APK للتحميل
+        uses: actions/upload-artifact@v4
+        with:
+          name: AppChat-APK
+          path: appchat.apk
