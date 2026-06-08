@@ -15,8 +15,18 @@ jobs:
       
       - name: فك ضغط المشروع
         run: |
-          unzip "appchat.zip" -d project/
-          echo "محتوى المشروع:"
+          unzip "appchat.zip" -d extracted/
+          echo "محتوى المجلد المستخرج:"
+          ls -la extracted/
+          
+          # إذا كان هناك مجلد واحد فقط بالداخل، نستخدمه
+          if [ $(ls -1 extracted/ | wc -l) -eq 1 ] && [ -d "extracted/$(ls extracted/)" ]; then
+            mv "extracted/$(ls extracted/)" project
+          else
+            mv extracted project
+          fi
+          
+          echo "محتوى المشروع النهائي:"
           ls -la project/
       
       - name: إعداد Node.js
@@ -34,7 +44,13 @@ jobs:
           cd project
           npm run build
           echo "محتوى مجلد dist:"
-          ls -la dist/
+          ls -la dist/ 2>/dev/null || ls -la build/ 2>/dev/null || echo "البحث عن مجلد الإخراج..."
+          # دعم Vite و React
+          if [ -d "dist" ]; then
+            echo "تم العثور على dist"
+          elif [ -d "build" ]; then
+            echo "تم العثور على build"
+          fi
       
       - name: إعداد Java
         uses: actions/setup-java@v4
@@ -200,7 +216,15 @@ jobs:
           
           mkdir -p $ASSETS_DIR $BUILD_DIR/classes $BUILD_DIR/apk
           
-          cp -r project/dist/* $ASSETS_DIR/
+          # نسخ ملفات dist أو build
+          if [ -d "project/dist" ]; then
+            cp -r project/dist/* $ASSETS_DIR/
+          elif [ -d "project/build" ]; then
+            cp -r project/build/* $ASSETS_DIR/
+          else
+            cp -r project/* $ASSETS_DIR/
+          fi
+          
           echo "ملفات assets:"
           ls -la $ASSETS_DIR/
           
@@ -219,7 +243,11 @@ jobs:
             -d $BUILD_DIR/classes \
             -cp $PLATFORM/android.jar:$BUILD_DIR/gen \
             MyApp/MainActivity.java \
-            $BUILD_DIR/gen/com/appchat/ai/R.java
+            $BUILD_DIR/gen/com/appchat/ai/R.java 2>/dev/null || \
+          javac -source 1.8 -target 1.8 \
+            -d $BUILD_DIR/classes \
+            -cp $PLATFORM/android.jar:$BUILD_DIR/gen \
+            MyApp/MainActivity.java
           
           $BUILD_TOOLS/d8 \
             --lib $PLATFORM/android.jar \
